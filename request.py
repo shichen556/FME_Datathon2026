@@ -7,7 +7,7 @@ client = OpenAI(
 
 resp = client.chat.completions.create(
     model="qwen3.6",
-    messages=[{"role": "user", "content": "Say hello from the EU."}],
+    messages=[{"role": "user", "content": "Como se accede a la database de mi proyecto"}],
 )
 
 print(resp.choices[0].message.content)
