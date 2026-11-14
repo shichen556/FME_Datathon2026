@@ -1,4 +1,4 @@
-"""Recommender v2: session-aware ranking with diversity on top of the starter's pull → predict → push loop.
+"""Recommender v2: session-aware ranking on top of the starter's pull → predict → push loop.
 
     python starter/recommender_v2.py     # same .env as starter/recommender.py
 
@@ -9,21 +9,11 @@ What the history says (shop.history_sessions, 2M impressions):
   co-occurrence in shop.history_events) are bought ~7x more often than the rest.
 - Slot 1 gets ~2x the purchases of slot 2 and ~9x those of slot 10: the order matters.
 
-Recommendation pipeline (4 phases, each with diversity limits):
-1. Viewed products in session (most viewed first, excluding bought)
-2. Co-purchased products (weighted by co-view strength, exponential decay by view age, capped/ sub)
-3. Best sellers of viewed subcategories (capped per sub)
-4. Global popular items (catch-all, capped per sub for diversity)
-
+So each list is: the session's viewed products (minus ones this shopper already bought), then
+products co-purchased with them, then best sellers of the viewed subcategories, then what sells
+right now (history + live shop.events). Shoppers without views get the live best sellers.
 Everything heavy is computed in RawTree in SQL and refreshed in the background, so answering a
 request is pure Python on in-memory dicts (well under 1 ms).
-
-Configuration (constants at module level):
-- COVIS_DECAY_FACTOR: exponential decay weight per view age in co-purchase scoring
-- COVIS_TOP_N: max co-purchases per product from SQL
-- RECENT_WEIGHT_7D / LIVE_WEIGHT / LIVE_RECENT_WEIGHT: purchase scoring multipliers
-- MAX_PER_SUBCATEGORY: diversity cap per subcategory across all phases
-- REFRESH_INTERVAL / FULL_REFRESH_INTERVAL: background model update cadence
 
 Usage:
     from recommender_v2 import recommend, build_model
@@ -53,7 +43,7 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-MODEL_VERSION = "v2-session-covis"
+MODEL_VERSION = "v3-Shichen"
 
 # ---------------------------------------------------------------- configuration constants
 
@@ -329,12 +319,10 @@ class Refresher(threading.Thread):
 def main() -> None:
     model = build_model()
     model.unavailable = out_of_stock()
-    logger.info("model ready: %d products with co-purchases, %d inactive, %d subcategories",
-                len(model.covis), len(model.inactive), len(model.subcategory))
+    logger.info("model ready: %d products with co-purchases, %d inactive", len(model.covis), len(model.inactive))
     Refresher(model).start()
     seen: set[str] = set()
     request_count = 0
-    start_time = time.time()
     while True:
         try:
             fresh = [r for r in query(NEW_REQUESTS) if r["request_id"] not in seen]
@@ -342,22 +330,17 @@ def main() -> None:
                 answers = []
                 for r in fresh:
                     seen.add(r["request_id"])
-                    items = recommend(r.get("recent_views"), model, r.get("user_id"))
                     answers.append({"request_id": r["request_id"],
-                                    "items": items,
+                                    "items": recommend(r.get("recent_views"), model, r.get("user_id")),
                                     "model_version": MODEL_VERSION})
                     request_count += 1
-                    # Log per-request for monitoring
-                    logger.debug("request %s: %d items", r["request_id"], len(items))
                 push(answers)
-                elapsed = time.time() - start_time
-                if request_count > 0 and request_count % 100 == 0:
-                    rate = request_count / elapsed if elapsed > 0 else 0
-                    logger.info("answered %d requests in %.1fs (%.1f req/s)", request_count, elapsed, rate)
+                if request_count % 100 == 0:
+                    logger.info("answered %d requests total", request_count)
         except Exception as e:  # keep running: shoppers keep arriving while you sleep
             logger.error("main loop error: %s\n%s", e, traceback.format_exc())
-            time.sleep(REQUEST_POLL_DELAY)
-        time.sleep(REQUEST_POLL_DELAY)
+            time.sleep(1)
+        time.sleep(0.3)
 
 
 if __name__ == "__main__":
