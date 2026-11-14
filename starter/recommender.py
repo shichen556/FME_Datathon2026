@@ -16,6 +16,8 @@ from typing import Any
 
 import requests
 
+MODEL_VERSION = "baseline"
+
 for line in Path(".env").read_text().splitlines() if Path(".env").exists() else []:
     key, _, value = line.partition("=")
     os.environ.setdefault(key.strip(), value.strip())
@@ -86,7 +88,7 @@ def predict(requests: list[Record], best: list[str], unavailable: set[str]) -> l
     """One submission per request."""
     return [{"request_id": req["request_id"],
              "items": recommend(req["recent_views"], best, unavailable),
-             "model_version": "v1_livecart"} for req in requests]
+             "model_version": MODEL_VERSION} for req in requests]
 
 
 def recommend(recent_views: list[Record], best: list[str], unavailable: set[str] = frozenset()) -> list[str]:
