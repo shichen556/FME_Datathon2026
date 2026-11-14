@@ -17,14 +17,59 @@ request is pure Python on in-memory dicts (well under 1 ms).
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-from recommender import TEAM, Record, out_of_stock, push, query
+import requests
+
+# Self-contained (no import from recommender.py), so this file works under any name.
+# .env is searched in the current directory and in the repo root (one level above starter/).
+for env in (Path(".env"), Path(__file__).resolve().parent.parent / ".env"):
+    if env.exists():
+        for line in env.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() and not key.strip().startswith("#"):
+                os.environ.setdefault(key.strip(), value.strip())
+        break
+API = os.environ.get("RAWTREE_API_URL", "https://api.rawtree.com")
+TEAM = os.environ["TEAM_ID"]
+http = requests.Session()
+http.headers["Authorization"] = f"Bearer {os.environ['RAWTREE_API_KEY']}"
+
+Record = dict[str, Any]
+"""RawTree returns rows as JSON objects: {"column": value, ...}"""
 
 MODEL_VERSION = "v2-session-covis"
+
+OUT_OF_STOCK = """
+SELECT product_id::String AS product_id
+FROM shop.catalog_updates
+WHERE change::String IN ('out_of_stock', 'back_in_stock')
+GROUP BY product_id
+HAVING argMax(change::String, ts::DateTime64(3)) = 'out_of_stock'"""
+"""Products whose latest stock change is a stock-out."""
+
+
+def query(sql: str) -> list[Record]:
+    r = http.post(f"{API}/v1/query", json={"sql": sql}, timeout=30)
+    r.raise_for_status()
+    return r.json()["data"]
+
+
+def out_of_stock() -> set[str]:
+    """Products out of stock right now. Recommending one makes the whole answer invalid."""
+    return {r["product_id"] for r in query(OUT_OF_STOCK)}
+
+
+def push(answers: list[Record]) -> None:
+    """Batch insert into team_NN.submissions."""
+    http.post(f"{API}/v1/tables/submissions", params={"database": TEAM}, json=answers, timeout=10).raise_for_status()
+    print(f"answered {len(answers)}")
 
 # ---------------------------------------------------------------- SQL (runs inside RawTree)
 
