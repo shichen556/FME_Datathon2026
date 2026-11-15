@@ -376,6 +376,7 @@ class ModelStore:
     def background_worker(self) -> None:
         last_fast = 0.0
         last_heavy = 0.0
+        refresh_hist_pop()
         while True:
             now = time.time()
 

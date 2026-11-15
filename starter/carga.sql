@@ -49,5 +49,42 @@ WHERE request_id != '__init__'
 GROUP BY served_by, reason;
 
 -- 6. Team_NN table extraction
-SELECT *
-    FROM team_34.feedback
+--SELECT *
+  --  FROM team_34.feedback
+
+
+-- 1. Confirmar cuántas respuestas de v3 hay ya guardadas en team_34.submissions
+SELECT
+    model_version::String AS model_version,
+    count()               AS total_enviadas
+FROM team_34.submissions
+GROUP BY model_version;
+
+-- 2. Ver las 15 filas MÁS RECIENTES de team_34.feedback (ordenadas por ts DESC)
+SELECT
+    ts,
+    request_id::String      AS request_id,
+    served_by::String       AS served_by,
+    fallback_reason::String AS reason,
+    latency_ms,
+    clicked::String         AS clicked,
+    purchased::String       AS purchased
+FROM team_34.feedback
+WHERE request_id != '__init__'
+ORDER BY ts::DateTime64(3) DESC
+LIMIT 15;
+
+-- esquema general
+SELECT * FROM shop.history_sessions LIMIT 2;
+SELECT * FROM shop.requests ORDER BY ts DESC LIMIT 2;
+SELECT change::String AS change, count() AS n FROM shop.catalog_updates GROUP BY change;
+
+--2. Feedback de v3 tras 10-15 min corriendo solo (apaga cualquier otra versión tuya):
+SELECT
+    toStartOfMinute(ts::DateTime64(3)) AS minute,
+    count() AS n,
+    countIf(served_by::String = 'team') AS by_team,
+    round(quantile(0.95)(latency_ms::Float64)) AS p95_ms
+FROM team_34.feedback
+WHERE request_id != '__init__' AND ts::DateTime64(3) > now() - INTERVAL 15 MINUTE
+GROUP BY minute ORDER BY minute

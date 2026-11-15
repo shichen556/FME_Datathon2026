@@ -68,7 +68,7 @@ SELECT toStartOfHour(ts::DateTime64(3)) AS hour,
        100 * countIf(clicked != '') / count()   AS ctr_pct,
        100 * countIf(purchased != '') / count() AS conversion_pct,
        sum(revenue_eur::Float64) / count()      AS revenue_per_request
-FROM team_NN.feedback
+FROM team_34.feedback
 WHERE request_id != '__init__'
 GROUP BY hour, served_by
 ORDER BY hour DESC, served_by;
@@ -79,7 +79,7 @@ SELECT fallback_reason::String              AS fallback_reason,
        count()                              AS requests,
        quantile(0.5)(latency_ms::Float64)   AS p50_ms,
        quantile(0.95)(latency_ms::Float64)  AS p95_ms
-FROM team_NN.feedback
+FROM team_34.feedback
 WHERE ts > now() - INTERVAL 30 MINUTE AND request_id != '__init__'
 GROUP BY fallback_reason;
 
