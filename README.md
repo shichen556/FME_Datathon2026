@@ -85,7 +85,7 @@ Each person worked on their own branch. Versions follow the naming `vX_NAME` (X 
 
 ### Why `v3-Shichen` and not the others
 
-| Version | Strengths | Why it was not the final one |
+| Version | Strengths | Weaknesses |
 |---|---|---|
 | `v3-Shichen` (final) | Structure derived from the data (retarget viewed products, co-purchase), simple, tested, stable live | Heuristic weights, no cold start, ignores device/region/price |
 | `v3 - Cristian` | Richest signal set: live carts, user profile and price, price model by region and device, discount boost, text-based cold start | Many hand-set weights with no tests and no offline evaluation; we could not show it beating the simpler version |
