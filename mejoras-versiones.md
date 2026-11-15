@@ -71,43 +71,65 @@
 - [ ] Resumen de una página para el jurado: idea, datos que la justifican, uso del stream, límites
 - [ ] Demo preparada y respuesta a "¿cómo lo validasteis offline?"
 
-# Rama `data` (Cristian): exploración + recomendador más completo
+# v3 - Cristian (rama `data`): checklist actualizado (15-nov, 11:04)
 
 ## ✅ Hecho
 
-### Exploración de datos
-- [x] `run_sql.py`: ejecuta cualquier .sql contra RawTree, sustituye `team_NN` por tu TEAM_ID e imprime tablas con pandas
-- [x] `starter/carga.sql`: consultas de análisis (conversión por página y dispositivo, % de compras de productos ya vistos, embudo view → carrito → compra, precio medio comprado por región y dispositivo, diagnóstico del feedback)
+### Exploración y herramientas
+- [x] `run_sql.py`: ejecuta cualquier .sql contra RawTree, sustituye `team_NN` por tu TEAM_ID y muestra tablas con pandas
+- [x] `starter/carga.sql`: análisis del histórico (conversión por página y dispositivo, % de compras de productos ya vistos, embudo view → carrito → compra, precio medio por región y dispositivo)
+- [x] Consultas de diagnóstico para la ronda en vivo (nuevo en `a9f4ab9`): respuestas por `model_version`, 15 filas más recientes de `team_34.feedback`, feedback por minuto con p95 de latencia, esquema de las tablas y tipos de `catalog_updates`
 - [x] Lectura de `.env` más robusta (ignora comentarios, busca también en la carpeta superior)
+- [x] `team_34` en `queries.sql` (a mano, igual que en las otras ramas)
 
 ### Recomendador (`recommender_V2.py`, "v3 - Cristian")
-- [x] Dos snapshots en hilo de fondo: rápido cada 6 s (catálogo, stock, popularidad, carritos en vivo) y pesado cada 10 min (co-compras, perfiles, precios)
+- [x] Dos snapshots en hilos de fondo: rápido cada 6 s (catálogo, stock, popularidad, carritos en vivo) y pesado cada 10 min (co-compras, perfiles, precios)
 - [x] Catálogo actual aplicando `catalog_updates` (precio, stock, activo, producto nuevo, descuento)
-- [x] Popularidad ponderada: compra 5, carrito 2, vista 0,2 en histórico; ×6 y más en eventos de los últimos 90 min
+- [x] Popularidad ponderada: compra 5, carrito 2, vista 0,2 en histórico; compra 30, carrito 10, vista 1,5 en eventos de los últimos 90 min
 - [x] Vistas de la sesión con decaimiento 0,75 por antigüedad
 - [x] Co-compras de los últimos 21 días (vista y carrito → compra, top 25 por producto)
 - [x] Carritos en vivo (últimos 20 min) como señal fuerte
 - [x] Perfil de usuario: productos comprados, 6 más interactuados y precio medio de compra
 - [x] Afinidad de precio por usuario, o por región y dispositivo si el usuario es nuevo
 - [x] Boost por descuento
-- [x] Cold start: similitud por texto (palabras de marca, subcategoría y descripción, más 0,25 si es la misma marca) para productos nuevos o poco populares
+- [x] Cold start: similitud por texto (marca, subcategoría y descripción, más 0,25 si es la misma marca) para productos nuevos o poco populares
 - [x] Excluye productos ya comprados (histórico y en vivo), agotados e inactivos
 - [x] Más peso al histórico personal en `home` o sin vistas
 - [x] Cadena de relleno por popularidad cuando faltan candidatos
-- [x] Dos sesiones HTTP (una para tiempo real y otra para fondo), consulta solo de requests de los últimos 3 s, deduplicación con cola de 20.000 ids y log de edad de la request en ms
+- [x] Dos sesiones HTTP (tiempo real y fondo), consulta solo de requests de los últimos 3 s, deduplicación con cola de 20.000 ids y log de la edad de la request en ms
 
 ## ⏳ Pendiente
-- [ ] Sin tests ni evaluación offline (IPS/SNIPS)
-- [ ] Los pesos (2,4 / 2,9 / 4,5 / 1,7…) están puestos a mano, sin validar
-- [ ] Sin límite de diversidad por subcategoría o categoría
-- [ ] Arranque: el bucle espera solo al snapshot rápido, así que las co-compras y perfiles están vacíos hasta el primer refresco pesado (puede tardar hasta decenas de segundos)
-- [ ] Consulta de perfiles sobre todo `history_events` (~12 M filas): coste alto, comprobar tiempos
-- [ ] Excluye todo lo comprado alguna vez por el usuario: validar que no quita aciertos (el README dice que "tiende" a no recomprar)
-- [ ] Los errores de push no se reintentan (aceptable si ya iría tarde, pero no queda registro)
-- [ ] `carga.sql` tiene `team_34` escrito a mano en la última consulta
-- [ ] No aprende de `team_34.feedback` (clics y compras)
-- [ ] Aclarar en el repo qué archivo es el final: `recommender_v1.py` o `recommender_V2.py` (la `V` mayúscula puede dar problemas de importación)
 
+### Fallos a corregir
+- [ ] `recommender_v1.py`, línea 379: `refresh_hist_pop()` sin `self.` lanza `NameError` y mata el hilo de fondo; con ese archivo el sistema no responde a ninguna request (todo cae al fallback). Cambiar a `self.refresh_hist_pop()`
+- [ ] Confirmar qué archivo está corriendo (`recommender_v1.py` marca "v2 - Cristian"; `recommender_V2.py` marca "v3 - Cristian") y que no es el que tiene el fallo
+- [ ] Comprobar con la consulta 1 de `carga.sql` qué `model_version` están respondiendo y cuántas respuestas ha enviado cada una
+
+### Conflicto de equipo
+- [ ] Hay dos versiones posibles (v3-Shichen y v3 - Cristian) con el mismo `team_34`: si corren a la vez, cada request recibe dos respuestas, solo cuenta una y el feedback se mezcla
+- [ ] Decidir quién corre hasta las 12:00 y apagar la otra
+- [ ] Mirar que el semáforo de la leaderboard no esté en verde solo por la otra versión
+
+### Validación
+- [ ] Sin tests ni evaluación offline (IPS/SNIPS)
+- [ ] Comprobar en `team_34.feedback` que `served_by = team` y que el p95 de latencia está por debajo de 3 s
+- [ ] Comparar la conversión por `model_version` en la ronda final
+
+### Modelo
+- [ ] Pesos puestos a mano (2,4 / 2,9 / 4,5 / 1,7…), sin validar
+- [ ] Sin límite de diversidad por categoría o subcategoría
+- [ ] Arranque: el bucle solo espera al snapshot rápido; co-compras y perfiles están vacíos hasta el primer refresco pesado
+- [ ] La consulta de perfiles recorre todo `history_events` (~12 M filas): revisar tiempos
+- [ ] Excluye todo lo que el usuario compró alguna vez: validar que no quita aciertos
+- [ ] Errores de push sin reintento ni registro
+- [ ] No aprende de `team_34.feedback` (clics y compras)
+
+### Repositorio
+- [ ] `team_34` escrito a mano en `carga.sql` y `queries.sql` (volver a `team_NN`)
+- [ ] Aclarar el archivo final (`recommender_v1.py` o `recommender_V2.py`; la `V` mayúscula puede dar problemas de importación)
+- [ ] Decidir qué recomendador es el final y fusionarlo en `main`
+- [ ] Combinar lo mejor de cada rama: tests y filtros de v3-Shichen, cold start, precio y carritos en vivo de `data`, límite de diversidad de `algorithm`
+- [ ] Resumen de una página y demo para el jurado
 
 # Rama `algorithm` (Rubén): reescritura del baseline con puntuación híbrida
 
