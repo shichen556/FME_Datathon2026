@@ -1,257 +1,142 @@
-# RawTree Challenge · Real-Time Recommendation
+# Real-Time Recommender · Team 34 · RawTree Challenge (Datathon FME 2026)
 
-**Datathon FME 2026 · 14–15 November 2026 · UPC Barcelona** · [Challenge page](https://datathon.rawtree.dev) · [Leaderboard](https://datathon.rawtree.dev/leaderboard)
+**Team:** Cristian · Rubén · Shichen &nbsp;|&nbsp; **Final system:** `v3-Shichen` (`starter/recommender_v2.py`)
 
-> Shoppers arrive at an online store every few seconds. For each one you have **3 seconds** to choose the **10 products** they will see. A hidden model simulates each shopper's decision to click and buy. Practise against the live stream on Saturday with a public leaderboard; from **Sunday 10:00 to 12:00 CET (UTC+1)** the stream switches to data nobody has seen and the leaderboard goes dark. At 12:00 the final ranking appears on its own.
+The original challenge statement is kept in [`CHALLENGE.md`](CHALLENGE.md). This README explains **how** we built the system and **why** we made each decision, including what we did *not* manage to validate.
 
 ---
 
-## The story
+## 1. What it does (one paragraph)
 
-An online store sells around 5,000 products in ten categories. On the home page and on every product page there is a row of ten recommended products. Right now that row just shows the **all-time best sellers**. You have to build something that sells more, and it will be tested live, on shoppers arriving in real time.
+For every shopper request, the system answers within the 3-second limit with an ordered list of 10 products. It puts first what the shopper already looked at in this session, then what other shoppers bought after looking at the same products, then best sellers of the same subcategories, and finally what sells best right now. It never shows out-of-stock, inactive, or recently bought products. Everything heavy is computed in SQL inside RawTree and refreshed in the background, so answering a request is a pure in-memory lookup (< 1 ms).
 
-## What you build
+## 2. Why this design: what the data told us
 
-A system that, on its own and without anyone pressing buttons:
+The ranking structure comes from analysing `shop.history_sessions` (≈2M impressions) and `shop.history_events`. These figures are the ones quoted in the module docstring of `starter/recommender_v2.py`:
 
-1. **Reads recommendation requests** from a RawTree table as they arrive. Each request describes a shopper and what they have just done in this session.
-2. **Within 3 seconds, writes back an ordered list of 10 product IDs** for that request.
-3. **Learns** from the feedback it receives (what was clicked and bought) and from the shared stream of store activity.
-
-```
-             ┌──────────────────────────────┐
-             │  Shopper simulator (hidden)  │
-             └──────┬────────────────▲──────┘
-  shop.requests     │                │ reads your answers,
-  shop.events       │                │ decides clicks & purchases
-  shop.catalog_...  ▼                │
-             ┌─────────────┐   ┌─────┴──────────────────┐
-             │ Your system │──▶│ team_NN.submissions    │
-             └──────▲──────┘   └────────────────────────┘
-                    │          ┌────────────────────────┐
-                    └──────────│ team_NN.feedback       │ only your team can read it
-                               └────────────────────────┘
-```
-
-## Data
-
-All data lives in **RawTree**. Each team gets one API key that can **read** the shared `shop` database and **read and write** its own database `team_NN`.
-
-### Available from the start
-
-**`shop.catalog`**: the product catalogue, around 5,000 products.
-
-| Field | Type | Notes |
-|---|---|---|
-| `product_id` | string | Opaque ID |
-| `category` | string | Top-level category (10 values) |
-| `subcategory` | string | 90 values |
-| `brand` | string | |
-| `price_eur` | number | Price at the start. Price changes arrive in `shop.catalog_updates` |
-| `description` | string | One or two sentences of product text |
-| `created_at` | timestamp | |
-| `is_active` | bool | |
-
-**`shop.history_sessions`**: 60 days of past carousel impressions (≈2 million records), served by the old system.
-
-| Field | Type | Notes |
-|---|---|---|
-| `request_id` | string | |
-| `ts` | timestamp | |
-| `user_id` | string | Opaque ID |
-| `context` | object | `device` (web, ios, android), `region`, `page` (home, product, category) |
-| `recent_views` | array | Products viewed earlier in the session, with timestamps |
-| `shown` | array | The 10 products the old system showed, in order |
-| `propensity` | array | Probability the old system had of showing each of those products in that slot, given the products in the slots above it |
-| `clicked` | string or null | Product clicked, if any |
-| `purchased` | string or null | Product bought, if any |
-| `revenue_eur` | number | |
-
-The old system is a "best sellers plus a bit of randomness" carousel, so this log is **biased towards popular products**. The `propensity` column lets you correct for that bias, if you want to.
-
-**`shop.history_events`**: 60 days of organic store activity that did **not** come from the carousel (`view`, `add_to_cart`, `purchase`), ≈12 million records. Useful to learn what users like beyond what the old system showed them.
-
-| Field | Type | Notes |
-|---|---|---|
-| `ts` | timestamp | |
-| `event_type` | string | `view`, `add_to_cart`, `purchase` |
-| `user_id`, `session_id` | string | |
-| `product_id` | string | |
-| `price_eur` | number | Price at the time of the event |
-| `device`, `region` | string | |
-
-### During the event (Saturday to Sunday)
-
-**`shop.requests`** (append-only): one record per shopper arriving at the carousel, about **3 per second**, day and night.
-
-```json
-{
-  "request_id": "r_01JD8K3...",
-  "ts": "2026-11-14T16:02:11.482Z",
-  "user_id": "u_7f21c9",
-  "is_new_user": false,
-  "context": {"device": "ios", "region": "Catalunya", "page": "product"},
-  "recent_views": [
-    {"product_id": "p_5a1e", "ts": "2026-11-14T16:01:40Z"},
-    {"product_id": "p_0b9d", "ts": "2026-11-14T16:01:58Z"}
-  ]
-}
-```
-
-**`shop.events`** (append-only): organic store activity in real time, same format as `shop.history_events`. This is where you can spot trends as they happen.
-
-**`shop.catalog_updates`** (append-only): one record per change, with the full product after the change plus `ts` and `change` (`new_product`, `price_change`, `out_of_stock`, `back_in_stock`). The current catalogue is `shop.catalog` with the latest update of each product applied on top.
-
-**`team_NN.feedback`** (only your team can read it): what happened with each of your recommendations, written a few seconds after the deadline.
-
-```json
-{
-  "request_id": "r_01JD8K3...",
-  "ts": "2026-11-14T16:02:16.900Z",
-  "shown": ["p_91aa", "p_5a1e", "..."],
-  "served_by": "team",
-  "fallback_reason": "",
-  "latency_ms": 840,
-  "clicked": "p_91aa",
-  "purchased": "p_91aa",
-  "revenue_eur": 34.99
-}
-```
-
-`served_by` is `team` if your answer arrived on time and was valid, and `fallback` if not; in that case the shopper saw the baseline (the all-time best sellers that are in stock) and `fallback_reason` says why (`missing`, `late` or `invalid`). `clicked` and `purchased` are `""` when nothing happened. The first record of the table (`request_id = "__init__"`) is a placeholder: ignore it.
-
-**`team_NN.scratch`**: an empty table for whatever you want to store in RawTree (features, embeddings, model outputs). No schema needed: insert JSON.
-
-## What you submit
-
-Insert **one record per request** into **`team_NN.submissions`**:
-
-```json
-{
-  "request_id": "r_01JD8K3...",
-  "items": ["p_91aa", "p_5a1e", "p_c302", "p_77d0", "p_0e12",
-            "p_a4b8", "p_19f3", "p_6d2c", "p_e801", "p_3b5a"],
-  "model_version": "v3-mf-bandit"
-}
-```
-
-Rules:
-
-- **Exactly 10 distinct, active product IDs.** Invalid answers are replaced by the fallback.
-- The answer must reach RawTree **within 3 seconds of the request `ts`**, as measured by the organisers' clock (polled every half second). Late answers are replaced by the fallback.
-- If you send several answers for the same request, only one counts: send one.
-- **Batch your inserts** (for example, every half second) instead of one HTTP call per request. For reference, the starter baseline polls every 0.3 s and answers in about 1 s (95% within 1.5 s) from the request `ts`: the rest of the 3 seconds is yours to compute.
-- Order matters: shoppers look at the first slots much more than at the last ones.
-
-## Timeline
-
-| When | What |
+| Finding | Consequence in the model |
 |---|---|
-| **Saturday, opening** | Data, keys and starter kit released |
-| **Saturday 10:00 → Sunday 10:00** | Practice round: live stream, **public leaderboard** updated every 10 minutes |
-| **Sunday 10:00 → 12:00** | **Final round**: the stream switches to **new data** (new shoppers, new products, new trends). The leaderboard is hidden |
-| **Sunday 12:00** | Submissions close. The stream stops and the **final ranking appears automatically** on the leaderboard page |
+| A product the shopper **viewed earlier in the session**, shown in slot 1, is bought ~17× more than any other product in slot 1 (6.3 % vs 0.37 %) | Phase 1 of every list: the viewed products |
+| Products **bought in sessions where a viewed product was viewed** are bought ~7× more than the rest | Phase 2: co-purchase candidates (view → purchase) |
+| **Position matters**: slot 1 gets ~2× the purchases of slot 2 and ~9× those of slot 10 | Most likely product goes first; order is deliberate |
+| The old system was "best sellers + a bit of randomness", so the log is biased toward popular items | We do not trust raw hit-rate on that log (see §5) |
 
-All times are Barcelona time (CET, UTC+1); the data timestamps are UTC.
+The ranking pipeline, in order, until 10 products are filled:
 
-There is no file to upload and nothing to do at 12:00. **Your system *is* your submission**: whatever it answers between 10:00 and 12:00 is what gets scored.
+1. **Viewed products** of the session (most viewed first, then most recent), minus anything already bought.
+2. **Co-purchases** of the viewed products, weighted by an exponential decay of 0.8 per view age.
+3. **Best sellers of the viewed subcategories** (max 5 per subcategory).
+4. **Global best sellers** as final filler (this is what shoppers with no views receive), capped at 5 per subcategory for diversity.
 
-During the final round nothing changes on your side: your system keeps reading requests and answering them, the requests are simply new. You keep receiving feedback, so you can estimate your own conversion, but you will not see anyone else's until 12:00. **Make sure your best version is running by 10:00.**
-
-**Status light.** During the final round the leaderboard shows only a green or red light per team: green if more than 90% of your answers in the last 5 minutes were valid and on time. It does not score anything; it is there so that if your system breaks at 10:05, you notice.
-
-**Shoppers keep arriving while you sleep.** A request that is not answered gets the fallback.
-
-Leaderboard: **https://datathon.rawtree.dev/leaderboard**
-
-## Evaluation
-
-### 70 points · Final round (automatic)
-
-Computed only on the requests of the final round (Sunday 10:00–12:00 CET). The practice round does not count.
-
-| Component | Points | Metric |
-|---|---|---|
-| Conversion | 50 | Expected purchases per 100 requests (see *No luck* below) |
-| Cold start | 10 | The same, restricted to **cold requests**: a new shopper (`is_new_user`), or `recent_views` that include a product added during the event (`new_product` in `shop.catalog_updates`) |
-| Reliability | 10 | Share of requests answered validly and on time |
-
-Conversion and cold start are turned into a 0–100 score between two anchors the organisers compute on the same stream:
+## 3. How it works (architecture)
 
 ```
-score = 100 × (team − baseline) / (oracle − baseline), clipped to [0, 100]
+ shop.requests ──▶ main loop (poll → recommend() in RAM → batch push) ──▶ team_34.submissions
+                          ▲ reads the current Model
+                          │
+          Refresher thread (background)
+            • every ~2 s : stock (out_of_stock / back_in_stock) + recent buyers
+            • every 10 min: full rebuild of co-purchases, popularity, catalogue
+          all heavy work is SQL executed inside RawTree
 ```
 
-- **baseline** (0): the all-time best sellers that are in stock, ranked once at the start of the stream (the starter-kit recommender). It is also the fallback.
-- **oracle** (100): the best list possible, the 10 products the hidden model itself would pick for each shopper.
-- The leaderboard also shows a **reference**: a strong recommender built by the organisers, as a benchmark. **It can be beaten.**
+- **No ML model is trained.** The "training" is SQL aggregation in RawTree: co-occurrence counts of view → purchase per session, and popularity scores. This is deliberate: it is fast, explainable, and robust under a 3-second deadline.
+- **Popularity with recency and live signal:** all-time purchases + 5× last 7 days + 20× live `shop.events` + 40× last 3 hours, so the ranking reacts to trends during the event.
+- **Validity filters:** out-of-stock (latest stock change per product), inactive (`is_active`, with `catalog_updates` applied), and products the user bought in the last 6 hours (store events + our own feedback). One invalid product invalidates the whole answer, so these filters protect reliability.
+- **Resilience:** the answering loop never waits for the database refresh; if a refresh fails, the last good model is kept and the error is logged.
 
-Reliability is the percentage of requests answered validly and on time.
+## 4. Learning from the stream: what is and is not live
 
-**On the leaderboard** the 70 points are normalised to a score out of 100 (about 71 conversion, 14 cold start, 14 reliability). Your final grade is 70 % of that score plus the jury's 30 points.
-
-**No luck.** Whether a shopper buys is random. To keep luck out of the ranking, the score uses each shopper's *probability* of buying, given the 10 products you showed, as computed by the simulator's hidden model, instead of the coin flip. Your feedback shows the realised clicks and purchases; over many requests the two agree, so maximise real purchases and the score follows. And real purchases still feed the model a little: a shopper who already bought a product tends not to want it again, so what your system sells changes later scores.
-
-### 30 points · Presentation (jury)
-
-On Sunday afternoon each team gives a **short presentation with a demo** to the jury. The top teams share their repository, so keep it readable.
-
-| Criterion | Points | What we look at |
-|---|---|---|
-| Method | 10 | Is the approach sound and well justified? How was it validated offline before going live? |
-| Learning from the stream | 10 | How did the system use feedback and live events (exploration, trends, price changes, cold start)? |
-| Use of RawTree | 5 | Features computed in SQL, embeddings, how the pipeline reads and writes |
-| Communication | 5 | Could a product manager understand what the system does and why it works? |
-
-**Tie-breaker:** expected revenue per request in the final round.
-
-## Getting started
-
-1. **Get your credentials** at the RawTree stand when you register your team: a `TEAM_ID` (like `team_07`) and a `RAWTREE_API_KEY`. Copy `.env.example` to `.env` and fill them in.
-2. **Meet RawTree.** It is an analytics database for JSON: you insert JSON and query it with SQL, no schema needed. It was built to be used by agents, so let yours find its way:
-   - Docs for agents: <https://rawtree.com/llms.txt>
-   - API: `https://api.rawtree.com` (`POST /v1/query`, `POST /v1/tables/{table}?database=team_NN`), auth with `Authorization: Bearer $RAWTREE_API_KEY`
-   - CLI: `curl -fsSL https://rawtree.com/install.sh | bash`, then `rtree query --api-key $RAWTREE_API_KEY --database $TEAM_ID "SELECT count() FROM shop.requests"`
-   - MCP: `https://mcp.rawtree.com/mcp`, sending your key as an `Authorization: Bearer` header
-
-   Tables are schemaless: every column is `Dynamic`, each value keeps its own type. Filters and most functions just work; join keys and a few aggregates need a cast, like `product_id::String`.
-3. **Get on the leaderboard in 30 minutes:** run the baseline.
-
-   ```bash
-   pip install -r starter/requirements.txt
-   python starter/recommender.py
-   ```
-
-   Or, without installing anything globally:
-
-   ```bash
-   uv run --with requests python starter/recommender.py
-   ```
-
-   The live stream opens on **Saturday at 10:00 CET**. Until then `shop.requests`, `shop.events` and `shop.catalog_updates` are empty, so queries on them fail with *Unknown expression identifier* and the baseline just retries. Explore the history meanwhile.
-
-4. **Beat it.** Explore the history, evaluate ideas offline (`starter/offline_eval.ipynb`), deploy, read your feedback, repeat.
-
-## Starter kit
-
-| File | What it is |
+| Signal | Used live? |
 |---|---|
-| `starter/recommender.py` | The baseline, about 120 lines, as a `pull → predict → push` loop: `recommend()` is the part to replace |
-| `starter/queries.sql` | SQL examples: current catalogue, popularity per category in the last hour, co-views, reading your feedback, your on-time rate |
-| `starter/offline_eval.ipynb` | Offline evaluation on `shop.history_sessions` — imports `recommender.py`, so it tests the same code that runs live; includes an inverse-propensity estimate of a new policy's click rate |
+| `shop.events` purchases (popularity and co-purchase) | Yes, refreshed every 10 min; popularity weights live events 20×/40× |
+| Stock changes (`catalog_updates`) | Yes, every ~2 s |
+| Recent purchases per user (store + our `team_34.feedback`) | Yes, every ~2 s, used only to avoid re-recommending |
+| Clicks and purchases in our own feedback as a learning signal | **No** (only used to exclude repeat purchases) |
+| Price changes, device, region, page | **No** |
+| New products (cold start) | **No**: they enter with score 0 |
 
-To open the notebook without installing anything globally:
+## 5. How we validated it (honest account)
+
+- **Offline:** `starter/offline_eval.ipynb` was run on a 7-day hold-out of `history_sessions` for two policies: `baseline` and `coview`. Saved results:
+
+  | Policy | hit-rate@10 | SNIPS CTR slot 1 | slot-1 matches |
+  |---|---|---|---|
+  | baseline (best sellers) | 0.380 | 0.047 | 3,915 |
+  | coview | 0.234 | 0.011 | 5,499 |
+
+  The co-view policy scores **below** the baseline on both metrics. We did not manage to interpret these metrics well enough to use them to tune the final model. One known caveat: the log was produced by a popularity-based system, so hit-rate favours popular products by construction. **The final policy (`v3-Shichen`) was never added to the notebook's `POLICIES`, so it has no offline score.**
+- **Weights are hand-set** (0.8 decay, 5×/20×/40×, cap of 5). They are heuristics inspired by the data findings in §2, not fitted values.
+- **Unit tests:** `tests/test_recommender_v2.py` has 50 tests. In our run with no network, 37 passed and the suite then **hung** on the first `Refresher` test, because `Refresher.run()` is an infinite loop and the test treats it as a single iteration. The remaining tests did not complete. This is a bug in the tests, not in the runtime loop.
+- **Live:** in the final round window we looked at (`team_34.feedback`, 10:34–10:49 UTC), 2,698 of 2,700 requests were served by our system (99.93 %) and the p95 latency was 2.0–2.3 s per minute, under the 3 s limit but without a lot of margin.
+- **Conversion and revenue per request** of the final round: *TODO(team): fill in from `team_34.feedback` using the query in §8.*
+
+## 6. How we worked: team, branches and AI agents
+
+Each person worked on their own branch. Versions follow the naming `vX_NAME` (X = version number, NAME = who pushed it), and each one reports it in `model_version`, so `team_34.submissions` shows which version answered.
+
+| Person | Branch | What they did | AI tools used |
+|---|---|---|---|
+| **Shichen** | `infraestructure` | Wrote the final system (`recommender_v2.py`): phased ranking, filters, background `Refresher`, pytest suite, merge and repo upkeep | Claude Opus 5.5 (first version of the code), qwen3.6 (incremental improvements) |
+| **Cristian** | `data` | Data exploration and tooling (`run_sql.py`, `carga.sql`, live diagnostic queries); an alternative recommender (`v3 - Cristian`) with live carts, user profile and price affinity, region/device price model and text-based cold start | Gemini 4 HydroGen (initial approach and explaining the project's concepts), Claude Sonnet 5.5 (code and incremental improvements) |
+| **Rubén** | `algorithm` | `v2-ruben`: hybrid scoring on category/subcategory/brand affinity, per-category cap, faster polling (0.1 s) and batched pushes | ChatGPT 6 (code) |
+
+**What humans decided vs what the agents wrote:** the agents produced most of the code; the team decided the approach, ran every query against RawTree, debugged real errors from our own runs (for example Dynamic-type casts, a SQL aggregate-alias error, and a stock-detection edge case), and chose the final version.
+
+### Why `v3-Shichen` and not the others
+
+| Version | Strengths | Why it was not the final one |
+|---|---|---|
+| `v3-Shichen` (final) | Structure derived from the data (retarget viewed products, co-purchase), simple, tested, stable live | Heuristic weights, no cold start, ignores device/region/price |
+| `v3 - Cristian` | Richest signal set: live carts, user profile and price, price model by region and device, discount boost, text-based cold start | Many hand-set weights with no tests and no offline evaluation; we could not show it beating the simpler version |
+| `v2-ruben` | Clean hybrid score, good batching | Excludes already-viewed products, which contradicts the 17× finding; no co-purchases, no live events, no `catalog_updates` |
+
+*TODO(team): confirm or adjust this rationale before the demo.*
+
+## 7. Known limitations and what we would do next
+
+1. **Validate offline:** add the final policy to `POLICIES` in `offline_eval.ipynb` and compare with IPS/SNIPS; then **fit** the weights instead of hand-setting them.
+2. **Cold start:** products added during the event get no score today. Use text similarity or embeddings on `description` (Cristian's branch has a first version).
+3. **Context:** use `device`, `region`, `page` and price affinity (the history shows large price differences by region and device).
+4. **Learn from our own feedback** (clicks and purchases), and add exploration (bandit) for rarely shown products.
+5. **Longer purchase memory:** we only exclude purchases from the last 6 h, not the 60-day history.
+6. **Robustness:** swap the whole `Model` atomically in the `Refresher` instead of reassigning fields one by one (a request could briefly see a mix of old and new fields); stock refresh is a few seconds, so a product going out of stock in that gap would invalidate an answer; run under `systemd`/`tmux`.
+7. **Latency margin:** p95 ≈ 2 s is high compared with the ≈1 s the starter gets; profile the main loop and the polling interval.
+8. **Fix the Refresher tests** (add a `run_once()` or a stop flag).
+
+## 8. Run it
 
 ```bash
-pipx run $(sed 's/^/--with /' starter/requirements.txt | tr '\n' ' ') jupyter notebook starter/offline_eval.ipynb
+cp .env.example .env            # fill TEAM_ID and RAWTREE_API_KEY (never commit .env)
+pip install -r starter/requirements.txt pytest
+python starter/recommender_v2.py            # the live system (run from the repo root)
+python -m pytest tests/test_recommender_v2.py -v   # see §5 about the Refresher tests
+jupyter notebook starter/offline_eval.ipynb        # offline evaluation
 ```
 
-## Rules
+Conversion and revenue per request by version (for the tie-breaker), from `team_34.feedback` joined with `team_34.submissions`:
 
-- All shoppers, sessions and outcomes are generated by a simulator with a secret seed. The catalogue is synthetic; no public dataset is used for scoring.
-- Feedback is private to each team. **Do not share keys.**
-- Recommendations must be produced by code, not by hand. The top teams share their repository with the jury.
-- Your system has to run unattended: keep it running on a machine that will not go to sleep.
-- Anything a team cannot explain in the presentation may be penalised.
+```sql
+SELECT s.model_version::String AS model_version,
+       count() AS requests,
+       100 * countIf(f.purchased::String != '') / count() AS conversion_pct,
+       sum(f.revenue_eur::Float64) / count() AS revenue_per_request
+FROM team_34.feedback AS f
+INNER JOIN team_34.submissions AS s ON f.request_id::String = s.request_id::String
+WHERE f.request_id != '__init__' AND f.served_by::String = 'team'
+GROUP BY model_version
+```
 
-Questions? Find the RawTree team at the stand. Good luck!
+(Only meaningful if a single version was answering during the period; two versions answering the same request mix the feedback.)
+
+## 9. Repository map
+
+| Path | Content |
+|---|---|
+| `starter/recommender_v2.py` | **Final system** (`MODEL_VERSION = "v3-Shichen"`) |
+| `starter/recommender.py` | Organisers' baseline (also the fallback) |
+| `starter/offline_eval.ipynb` | Offline evaluation (baseline vs coview results saved) |
+| `starter/queries.sql` | SQL examples (note: `team_34` is hard-coded; use `team_NN` as the template) |
+| `tests/` | pytest suite |
+| `checklist_log_versiones.md`, `roadmap.md` | Per-version log and team checklist |
+| `request.py` | Connectivity check for an LLM gateway used while developing; **not part of the recommender** |
