@@ -131,36 +131,43 @@
 - [ ] Combinar lo mejor de cada rama: tests y filtros de v3-Shichen, cold start, precio y carritos en vivo de `data`, límite de diversidad de `algorithm`
 - [ ] Resumen de una página y demo para el jurado
 
-# Rama `algorithm` (Rubén): reescritura del baseline con puntuación híbrida
+# v2-ruben (rama `algorithm`): checklist actualizado (15-nov, 11:16)
 
 ## ✅ Hecho
-- [x] Reescribe `starter/recommender.py` (+469 / −63 líneas), marcado "v2-ruben"
+- [x] Reescribe `starter/recommender.py` (+469 / −63 líneas), con `model_version = "v2-ruben"`
 - [x] Puntuación híbrida: compras 0,25, carritos 0,25, vistas 0,10 (logarítmicas, normalizadas por el máximo) + afinidad de categoría 0,20, subcategoría 0,15 y marca 0,05 según lo visto en la sesión
 - [x] Tope de 3 productos por categoría en la primera pasada y relleno después
 - [x] Filtro de agotados cada 1 s y de productos ya vistos
 - [x] Refresco del catálogo y de las estadísticas cada 5 min
 - [x] Respuestas acumuladas y enviadas cada 0,5 s; solo se vacía el buffer si el push tiene éxito
-- [x] Sondeo cada 0,1 s (más rápido que el baseline, de 0,3 s)
+- [x] Sondeo cada 0,1 s (el baseline era de 0,3 s)
 - [x] Cabecera y comentarios por secciones, más legible que el baseline
-- [x] `.gitignore` con `.vscode` y `team_34` en `queries.sql`
+- [x] Cabecera corregida a "V2 Recommendation System" (antes decía V3 y no coincidía con `model_version`) — nuevo en `d480781`
+- [x] `.gitignore` reorganizado: `.pytest_cache/` y `.vscode/`, y `.env.example` ya no se ignora — nuevo
+- [x] Merge de `infraestructure`: clave quitada del código de `request.py`, `tests/` incorporados — nuevo
+- [x] `team_34` en `queries.sql`
 
 ## ⏳ Pendiente
-- [ ] Excluye los productos ya vistos, pero según el análisis de v2 un producto visto en el slot 1 se compra ~17× más: probar a incluirlos
+
+### Fallos introducidos por el merge
+- [ ] `tests/test_recommender_v2.py` importa `starter.recommender_v2`, que no existe en esta rama: los tests fallan con `ImportError`; escribir tests para `recommender.py` o quitarlos de esta rama
+- [ ] `request.py` manda `RAWTREE_API_KEY` a `api.helmcode.com`: usar otra variable (por ejemplo `HELMCODE_API_KEY`) y añadir `openai` y `python-dotenv` a `requirements.txt`
+- [ ] La clave antigua de helmcode sigue en el historial (commits `af33f96` y `c89550b`): revocarla
+
+### Modelo (sin cambios desde el commit anterior)
+- [ ] Excluye los productos ya vistos, pero en el análisis de `infraestructure` un producto visto puesto en el slot 1 se compra ~17× más: probar a incluirlos
 - [ ] Sin co-compras ni señal de sesión más allá de categoría, subcategoría y marca
 - [ ] Lee el catálogo de `shop.catalog` pero no aplica `catalog_updates`: no ve productos nuevos, cambios de precio ni inactivos nuevos
-- [ ] Las estadísticas vienen solo de `history_events`: ninguna señal de `shop.events` en vivo ni de tendencias
+- [ ] Estadísticas solo de `history_events`: sin `shop.events` en vivo ni tendencias
 - [ ] Sin cold start (los productos nuevos no están en el catálogo cargado)
 - [ ] No excluye lo que el usuario ya compró
 - [ ] No usa `device`, `region`, `page` ni precio
 - [ ] Recorre todo el catálogo por request y recalcula los máximos cada vez: se puede precalcular
 - [ ] `load_catalog` filtra con `is_active is True`: comprobar que el tipo Dynamic devuelve un booleano
-- [ ] Sin tests ni evaluación offline
-- [ ] Mismo `team_34` escrito a mano en `queries.sql`
-- [ ] El docstring dice "V3 Hybrid" y `model_version` dice "v2-ruben": unificar para identificar bien la versión en `submissions`
+- [ ] Sin evaluación offline (IPS/SNIPS)
+- [ ] Pesos (0,25 / 0,20 / 0,15…) puestos a mano, sin validar
 
-
-# Común a las tres ramas (algorithm, data, infraestructure)
+### Repositorio y equipo
+- [ ] `team_34` escrito a mano en `queries.sql` (volver a `team_NN`)
 - [ ] Decidir qué recomendador es el final y fusionarlo en `main`
-- [ ] Comparar los tres con el mismo método offline (IPS/SNIPS del notebook) y con el feedback de la ronda
-- [ ] Combinar lo mejor de cada uno: lo visto primero y los tests de v2 (infraestructure), cold start, precio y carritos en vivo de `data`, y el límite de diversidad de `algorithm`
-- [ ] Quitar `team_34` y la clave de `request.py` (rama infraestructure) del repo
+- [ ] No ejecutar `v2-ruben` a la vez que otra versión con el mismo `team_34` (cada request recibiría dos respuestas y solo cuenta una)
