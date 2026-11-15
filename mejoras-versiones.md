@@ -1,63 +1,75 @@
 # Mejoras respecto al baseline original (main → infraestructure / v2)
 
-## ✅ Hecho en v3-shichen
+# v3-Shichen (rama `infraestructure`): checklist actualizado (15-nov, 11:00)
 
-### Ranking
-- [x] Personalización por sesión: los productos vistos van primero (sustituye a "los mismos 10 más vendidos para todos")
-- [x] Co-compras: productos comprados en sesiones donde se vio el producto visto, con decaimiento 0,8 por antigüedad de la vista
+## ✅ Hecho
+
+### Ranking (frente al baseline de `main`)
+- [x] Personalización por sesión: los productos vistos van primero (el baseline daba los mismos 10 a todos)
+- [x] Co-compras: productos comprados en sesiones donde se vio el producto, con decaimiento 0,8 por antigüedad de la vista
 - [x] Más vendidos de las subcategorías vistas
 - [x] Más vendidos globales como relleno final (lo que reciben los shoppers sin vistas)
-- [x] Diversidad: máximo 5 productos por subcategoría en las fases de co-compra y populares globales
+- [x] Diversidad: máximo 5 productos por subcategoría en co-compras y populares globales
 - [x] Orden pensado para los slots: lo más probable de comprar va en el slot 1
 
 ### Datos y aprendizaje en vivo
 - [x] Popularidad con peso reciente: histórico + 7 días (×5) + eventos en vivo (×20) + últimas 3 h (×40)
-- [x] Uso de `shop.events` en tiempo real (el baseline solo calculaba una vez al arrancar)
-- [x] Modelo reconstruido cada 10 min en segundo plano
-- [x] No recomendar lo que el usuario ya compró en las últimas 6 h (tienda + tu propio feedback)
+- [x] Usa `shop.events` en tiempo real (el baseline calculaba el ranking una sola vez)
+- [x] Reconstrucción completa del modelo cada 10 min en segundo plano
+- [x] No recomienda lo que el usuario ya compró en las últimas 6 h (tienda + tu propio feedback)
 
 ### Validez y fiabilidad
-- [x] Filtro de productos agotados (cada ~2 s)
-- [x] Filtro de productos inactivos (`is_active`), que el baseline no comprobaba
-- [x] Hilo `Refresher` en segundo plano: responder es solo Python en memoria (<1 ms)
+- [x] Filtro de agotados (cada ~2 s) e inactivos (`is_active`), que el baseline no comprobaba
+- [x] Hilo `Refresher`: responder es solo Python en memoria (<1 ms)
 - [x] Logging y manejo de errores; el bucle no se cae
 - [x] Conserva el último modelo si falla una actualización
 
-### Calidad del código
+### Calidad del código y repositorio
 - [x] ~700 líneas de tests con pytest (fases, casos límite, concurrencia, carga del modelo)
-- [x] `MODEL_VERSION` separado, para ver qué versión respondió en `submissions`
+- [x] `MODEL_VERSION` separado ("v3-Shichen" en v2, "baseline" en el starter)
+- [x] Clave API antigua quitada de `request.py`, que ahora lee de `.env` (commit `fix apikey`)
+- [x] `.env.example` subido y quitado del `.gitignore` (commit `'re'add .env.example`)
+- [x] `roadmap.md` añadido al repo
+- [x] Notebook `offline_eval.ipynb` ejecutado y guardado con resultados (baseline vs coview)
+- [x] Referencia offline obtenida: baseline hit rate@10 = 0,380 y SNIPS slot 1 = 0,047; coview 0,234 y 0,011
 
 ## ⏳ Pendiente
 
-### Seguridad y limpieza (urgente)
-- [ ] Revocar la clave `sk-hke_…` de `request.py` y borrar el archivo (sigue en el historial de git)
-- [ ] Quitar `team_34` escrito a mano en `queries.sql` (volver a `team_NN`)
-- [ ] Subir `.env.example` con valores vacíos y quitarlo del `.gitignore`
-- [ ] Fusionar `infraestructure` en `main` o indicar cuál es la rama final
+### Seguridad (urgente)
+- [ ] Revocar la clave antigua de helmcode: sigue en el historial (commits `af33f96` y `c89550b`), borrarla del código no basta
+- [ ] `request.py` envía `RAWTREE_API_KEY` a `api.helmcode.com`: usar otra variable (por ejemplo `HELMCODE_API_KEY`)
+- [ ] Añadir `openai` y `python-dotenv` a `requirements.txt` si `request.py` se queda
+- [ ] Quitar el prefijo `sk-hke_…` citado en `roadmap.md`
 
 ### Validación
 - [ ] Ejecutar `pytest tests/test_recommender_v2.py -v` y confirmar que pasa
-- [ ] Añadir v2 a `POLICIES` del notebook y comparar con IPS/SNIPS frente a baseline y `coview`
-- [ ] Anotar conversión e ingresos por request de la ronda final (desempate)
+- [ ] Añadir `recommend` de v2 a `POLICIES` del notebook y comparar con IPS/SNIPS frente a baseline y coview
+- [ ] Anotar conversión e ingresos por request de la ronda final por `model_version` (desempate)
+- [ ] Comprobar en `team_34.feedback` que `served_by = team` y p95 de latencia < 3 s
 
-### Modelo
-- [ ] Cold start: embeddings de `description` para productos nuevos (hoy entran con puntuación 0)
+### Modelo (para después de la final)
+- [ ] Cold start: embeddings o similitud de texto de `description` para productos nuevos (hoy entran con puntuación 0)
 - [ ] Usar `device`, `region` y `page` (ahora se ignoran)
 - [ ] Aprender de `team_34.feedback` (clics y compras), no solo evitar repeticiones
-- [ ] Ajustar con datos los pesos fijados a mano (×5, ×20, ×40, 0,8, tope de 5)
-- [ ] Filtrar por cambios de precio de `catalog_updates`
+- [ ] Validar con datos los pesos puestos a mano (×5, ×20, ×40, 0,8, tope de 5)
+- [ ] Usar cambios de precio de `catalog_updates` (descuentos) como señal
 - [ ] Corregir el sesgo de popularidad con `propensity` (IPS) al entrenar
 - [ ] Exploración (bandit) para probar productos poco vistos
+- [ ] Ideas de `data` (Cristian): carritos en vivo, perfil y precio del usuario, cold start por texto
+- [ ] Idea de `algorithm` (Rubén): límite de diversidad por categoría
 
 ### Robustez
-- [ ] Evitar la carrera entre hilos: sustituir el modelo entero de golpe en el `Refresher`, en lugar de reasignar campos uno a uno
-- [ ] Aumentar el límite de 50 requests por consulta, por si el bucle se retrasa
-- [ ] Ejecutar con `systemd` o `tmux` en una máquina que no se suspenda
+- [ ] Evitar la carrera en el `Refresher`: sustituir el modelo de golpe en lugar de reasignar campos uno a uno
+- [ ] Subir el límite de 50 requests por consulta, por si el bucle se retrasa
+- [ ] Mantener el sistema con `systemd` o `tmux` en una máquina que no se suspenda hasta las 12:00
 
-### Presentación (jurado)
-- [ ] Resumen de una página: idea, datos que la justifican, uso del stream, límites
+### Repositorio y presentación
+- [ ] Quitar `team_34` escrito a mano de `queries.sql` (volver a `team_NN`)
+- [ ] Actualizar `roadmap.md`: sigue listando como pendientes cosas ya hechas
+- [ ] Fusionar `infraestructure` en `main` o indicar cuál es la rama final
+- [ ] Decidir qué recomendador es el final (infraestructure, data o algorithm) y combinar lo mejor de cada uno
+- [ ] Resumen de una página para el jurado: idea, datos que la justifican, uso del stream, límites
 - [ ] Demo preparada y respuesta a "¿cómo lo validasteis offline?"
-- [ ] Repo legible para compartir con el jurado
 
 # Rama `data` (Cristian): exploración + recomendador más completo
 
