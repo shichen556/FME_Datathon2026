@@ -238,7 +238,7 @@ On Sunday afternoon each team gives a **short presentation with a demo** to the 
 |---|---|
 | `starter/recommender.py` | The baseline, about 120 lines, as a `pull → predict → push` loop: `recommend()` is the part to replace |
 | `starter/queries.sql` | SQL examples: current catalogue, popularity per category in the last hour, co-views, reading your feedback, your on-time rate |
-| `starter/offline_eval.ipynb` | Offline evaluation on `shop.history_sessions` — imports `recommender.py`, so it tests the same code that runs live; includes an inverse-propensity estimate of a new policy's click rate |
+| `starter/offline_eval.ipynb` | Offline evaluation on `shop.history_sessions` — imports `starter/recommender.py`, so it tests the same code that runs live; includes an inverse-propensity estimate of a new policy's click rate |
 
 To open the notebook without installing anything globally:
 
