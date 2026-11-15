@@ -1,6 +1,6 @@
 
 """
-V3 Hybrid Recommendation System
+V2 Recommendation System
 
 Run:
     python starter/recommender.py
@@ -531,3 +531,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
